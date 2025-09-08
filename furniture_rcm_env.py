@@ -28,7 +28,7 @@ class Point:
 class Furniture:
     def __init__(
         self,
-        code = 'DEFAUL',
+        code = 'DEFAULT',
         W = 400,
         D = 400,
         x = None,

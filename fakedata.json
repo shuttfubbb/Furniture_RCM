@@ -1,0 +1,49 @@
+{
+    "room":{
+        "N": 4200,
+        "M": 3200
+    },
+    "door":{
+        "W": 900,
+        "D": 300,
+        "x": 450,
+        "y": 0
+    },
+    "furnitures":[
+        {
+            "code":"GIUONG",
+            "num": 1,
+            "W": 2200,
+            "D": 1800,
+            "clearances": [500, 0, 500, 0] 
+        },
+        {
+            "code": "GIASACH",
+            "num": 1,
+            "W": 2300,
+            "D": 300,
+            "clearances": [500, 0, 0, 0] 
+        },
+        {
+            "code": "BANGHOC",
+            "num": 1,
+            "W": 1200,
+            "D": 600,
+            "clearances": [500, 0, 0, 0] 
+        },
+        {
+            "code": "TUQUANAO",
+            "num": 1,
+            "W": 2000,
+            "D": 600,
+            "clearances": [500, 0, 0, 0] 
+        },
+        {
+            "code": "TUDAUGIUONG",
+            "num": 1,
+            "W": 400,
+            "D": 400,
+            "clearances": [500, 0, 0, 0] 
+        }
+    ]
+}

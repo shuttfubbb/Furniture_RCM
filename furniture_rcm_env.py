@@ -5,6 +5,7 @@ import numpy as np
 from config import *
 from typing import Optional, Literal, List
 from enum import Enum
+import heapq
 import copy
 import math
 
@@ -14,13 +15,15 @@ register(
 )
 
 """
+^
+|
 y
 y
 y
 y
 y
 y
-xxxxxxxxxxxxxxxxxxxx
+0 xxxxxxxxxxxxxxxxxxx ->
 
 Tọa độ của phòng tuân thủ theo đúng hệ trục Oxy bình thường
 Các tình toán vị trí đồ đạc trong phòng sử dụng đơn vị minimet (mm)
@@ -181,13 +184,18 @@ class OccupancyMap:
         self.grid = np.zeros((self.g_size, self.g_size), dtype=int)        
 
 
-    def add_furniture(self, furniture: Furniture):
+    def mapping_to_grid(self, furniture: Furniture):
         # TODO: Test lại xem logic hàm này có đúng chưa
-        x1 = round(furniture.p1.x / self.n_sq)
-        y1 = round((self.M - furniture.p1.y) / self.m_sq)
-        x2 = round(furniture.p2.x / self.n_sq)
-        y2 = round((self.M - furniture.p2.y) / self.m_sq)
-        self.grid[y1:y2+1, x1:x2+1] = 1
+        i1 = round((self.M - furniture.p1.y) / self.m_sq)
+        j1 = round(furniture.p1.x / self.n_sq)
+        i2 = round((self.M - furniture.p2.y) / self.m_sq)
+        j2 = round(furniture.p2.x / self.n_sq)
+        return i1, j1, i2, j2
+        
+
+    def add_furniture(self, furniture: Furniture):
+        i1, j1, i2, j2 = self.mapping_to_grid(furniture)
+        self.grid[i1:i2+1, j1:j2+1] = 1
 
 
     def reset(self):
@@ -213,6 +221,7 @@ class FurnitureRcmEnv(gym.Env):
         # reward checkpoit
         self.total_violation_ratio = 0
         self.total_dot_nf_nw = 0
+        self.total_reachable = 0
 
 
         # Config space
@@ -290,8 +299,8 @@ class FurnitureRcmEnv(gym.Env):
 
         if self.is_valid_position(cur_furniture):
             self.occupancy_map.add_furniture(cur_furniture)
-            self.furnitures_inroom.append(cur_furniture) # Thêm ngay nội thất hiện tại để đủ nội thất trong phòng rồi mới tính reward
             reward = self.calculate_reward(cur_furniture)
+            self.furnitures_inroom.append(cur_furniture)
             if self.cur_index == len(self.furnitures) - 1:
                 terminated = True
             else:
@@ -364,24 +373,65 @@ class FurnitureRcmEnv(gym.Env):
     
 
     def reachable_reward(self, cur_furniture: Furniture):
-        door_grid_x = math.floor(self.door.x / self.occupancy_map.n_sq)
-        door_grid_y = math.floor(self.door.y / self.occupancy_map.m_sq)
-        
-        d_door = self.find_shortest_path(cur_furniture)
+        d_door, I_f = self.find_shortest_path(cur_furniture)
         d_delta = math.sqrt(self.N * self.N + self.M * self.M)
-        if d_door != INF_POS:
-            I_f = 1
+        if I_f == 1:
             e_Kf = math.exp(- (d_door * d_door / d_delta * d_delta))
         else:
-            I_f = 0
             e_Kf = 0
-
+        self.total_reachable += ((1 - I_f) + e_Kf * I_f)
+        F = len(self.furnitures_inroom)
+        return 1 - 2 * self.total_reachable / F
 
     
     def find_shortest_path(self, cur_furniture: Furniture):
-        len_path = INF_POS
+        """
+            A* algorithm
+        """
+        is_finded = 0
+        door_i = math.floor(self.door.y / self.occupancy_map.m_sq)
+        door_j = math.floor(self.door.x / self.occupancy_map.n_sq)
 
-        return len_path
+        if self.occupancy_map.grid[door_i][door_j] == 1:
+            return INF_POS_NUM, is_finded
+
+        fur_i = math.floor(cur_furniture.center.y / self.occupancy_map.m_sq)
+        fur_j = math.floor(cur_furniture.center.x / self.occupancy_map.n_sq)
+
+        fur_i1, fur_j1, fur_i2, fur_j2 = self.occupancy_map.mapping_to_grid(cur_furniture)
+
+        start = (door_i , door_j)
+        goal  = (fur_i  , fur_j )
+        rows, cols = GRID_SIZE, GRID_SIZE
+        open_set = []
+        heapq.heappush(open_set, (self.heuristic(start, goal), 0, start, [start])) # (f, g, node, path)
+        visited = set()
+
+        while open_set:
+            f, g, current, path = heapq.heappop(open_set)
+            if current in visited:
+                continue
+            visited.add(current)
+            if current == goal:
+                is_finded = 1
+                return g, is_finded
+            
+            for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+                nx, ny = current[0] + dx, current[1] + dy
+                if 0 <= nx < rows and 0 <= ny < cols and grid[nx, ny] == 0:
+                    neighbor = (nx, ny)
+                    if neighbor not in visited:
+                        new_g = g + 1
+                        new_f = new_g + self.heuristic(neighbor, goal)
+                        heapq.heappush(open_set, (new_f, new_g, neighbor, path + [neighbor]))
+        return INF_POS_NUM, is_finded
+
+
+    def heuristic(self, a, b):
+        """
+            Manhattan
+        """
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
 

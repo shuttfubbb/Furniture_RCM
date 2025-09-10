@@ -8,4 +8,4 @@ GRID_SIZE   = 32
 PIXEL2MM    = 50
 PENALTY     = 10
 
-INF_POS     = sys.maxsize
+INF_POS_NUM = sys.maxsize

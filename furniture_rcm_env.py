@@ -38,6 +38,7 @@ class Point:
         self.x = x
         self.y = y
 
+    @property
     def as_array(self):
         return np.array([self.x, self.y])
     
@@ -52,9 +53,8 @@ class Door:
 
 
 class FurnitureType(Enum):
-    CARBINET = 0
-    TEACHER_TABLE = 1
-    ANOTHER = 2
+    OTHER = 0
+    CARBINET = 1
 
 
 class Furniture:
@@ -63,7 +63,7 @@ class Furniture:
         code = 'DEFAULT',
         W = 0,
         D = 0,
-        type = FurnitureType.ANOTHER,
+        type = FurnitureType.OTHER,
         clearances: List[int] = [0, 0, 0, 0]  # Khoảng trống đặt đồ theo các hướng lần lượt right, up, left, down
     ):
         if clearances is None or len(clearances) != 4:
@@ -91,8 +91,18 @@ class Furniture:
     @property
     def accessibility_area(self) -> int:
         D_ac = self.p_ac2.x - self.p_ac1.x
-        W_ac = self.p_ac1.y - self.p_ac2.as_array
+        W_ac = self.p_ac1.y - self.p_ac2.y
         return W_ac * D_ac - self.area
+
+
+    @property
+    def u_vector(self):
+        if self.W < self.D:
+            return self.normal_vec
+        elif self.normal_vec[0] == 0:
+            return np.array([1, 0])
+        else:
+            return np.array([0, 1])
 
 
     def set_position(self, x, y):
@@ -134,19 +144,19 @@ class Furniture:
         ])
 
         corners = [
-            self.p1.as_array(),                                # top-left
+            self.p1.as_array,                                # top-left
             np.array([self.p1.x, self.p2.y]),                  # bottom-left
-            self.p2.as_array(),                                # bottom-right
+            self.p2.as_array,                                # bottom-right
             np.array([self.p2.x, self.p1.y])                   # top-right
         ]
 
         access_points = [
-            self.p_ac1.as_array(),
-            self.p_ac2.as_array()
+            self.p_ac1.as_array,
+            self.p_ac2.as_array
         ]
 
         # Dịch về gốc, xoay, dịch về lại tâm
-        c = self.center.as_array()
+        c = self.center.as_array
         rotated = [R @ (p - c) + c for p in corners]
         rotated_access = [R @ (p - c) + c for p in access_points]
 
@@ -186,9 +196,9 @@ class OccupancyMap:
 
     def mapping_to_grid(self, furniture: Furniture):
         # TODO: Test lại xem logic hàm này có đúng chưa
-        i1 = round((self.M - furniture.p1.y) / self.m_sq)
+        i1 = round(furniture.p1.y / self.m_sq)
         j1 = round(furniture.p1.x / self.n_sq)
-        i2 = round((self.M - furniture.p2.y) / self.m_sq)
+        i2 = round(furniture.p2.y / self.m_sq)
         j2 = round(furniture.p2.x / self.n_sq)
         return i1, j1, i2, j2
         
@@ -222,13 +232,15 @@ class FurnitureRcmEnv(gym.Env):
         self.total_violation_ratio = 0
         self.total_dot_nf_nw = 0
         self.total_reachable = 0
-
+        self.total_furtures_area = 0
+        self.total_areaXcenter = 0
+        self.total_scatter_matrix = 0
+        self.total_furtures_area_C = 0
+        self.total_cal_angle_C = 0
 
         # Config space
         max_room_sz = max(self.N, self.M)
-        x_space = spaces.Box(low=0, high=max_room_sz, shape=(), dtype=float)
-        y_space = spaces.Box(low=0, high=max_room_sz, shape=(), dtype=float)
-        k_space = spaces.Discrete(4)
+
         type_space = spaces.Discrete(len(FurnitureType))
         W_space = spaces.Box(low=0, high=max_room_sz, shape=(), dtype=int)
         D_space = spaces.Box(low=0, high=max_room_sz, shape=(), dtype=int)
@@ -239,7 +251,12 @@ class FurnitureRcmEnv(gym.Env):
             shape=(self.g_size, self.g_size),
             dtype=np.int32
         )
-        self.action_space = spaces.Tuple((x_space, y_space, k_space))
+
+        self.action_space = spaces.Box(
+            low=np.array([0.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
+            dtype=np.float32
+        )
         self.observation_space = spaces.Tuple((object_space, object_space, map_space))
 
 
@@ -275,8 +292,8 @@ class FurnitureRcmEnv(gym.Env):
         if self.cur_index + 1 < len(self.furnitures):
             next_furniture = copy.deepcopy(self.furnitures[self.cur_index + 1])
 
-        cur_furniture_info = (cur_furniture.type, cur_furniture.W, cur_furniture.D)
-        next_furniture_info = (next_furniture.type, next_furniture.W, next_furniture.D)
+        cur_furniture_info = (cur_furniture.type.value, cur_furniture.W, cur_furniture.D)
+        next_furniture_info = (next_furniture.type.value, next_furniture.W, next_furniture.D)
         return cur_furniture_info, next_furniture_info, self.occupancy_map.grid
 
 
@@ -286,11 +303,26 @@ class FurnitureRcmEnv(gym.Env):
         self.furnitures_inroom = []
         self.occupancy_map.reset()
         self.cur_index = 0
+
         self.total_violation_ratio = 0
+        self.total_dot_nf_nw = 0
+        self.total_reachable = 0
+        self.total_furtures_area = 0
+        self.total_areaXcenter = 0
+        self.total_scatter_matrix = 0
+        self.total_furtures_area_C = 0
+        self.total_cal_angle_C = 0
         return self._get_observation(), {}
 
 
-    def step(self, x: int, y: int, k: Literal[0, 1, 2, 3]):
+    def step(self, action):
+
+        action = np.clip(action, 0.0, 0.9999999)
+
+        x = math.floor(action[0] * self.N)
+        y = math.floor(action[1] * self.M)
+        k = int(math(action[2] / 0.25))
+
         reward = 0
         terminated = False
         cur_furniture = copy.deepcopy(self.furnitures[self.cur_index])
@@ -299,8 +331,10 @@ class FurnitureRcmEnv(gym.Env):
 
         if self.is_valid_position(cur_furniture):
             self.occupancy_map.add_furniture(cur_furniture)
+            # TODO: CHeck lại logic phần này
             reward = self.calculate_reward(cur_furniture)
             self.furnitures_inroom.append(cur_furniture)
+            # Cho tới đây
             if self.cur_index == len(self.furnitures) - 1:
                 terminated = True
             else:
@@ -315,8 +349,12 @@ class FurnitureRcmEnv(gym.Env):
         r_a = self.accessibility_reward(cur_furniture)
         r_v = self.visibility_reward(cur_furniture)
         r_path = self.reachable_reward(cur_furniture)
+        r_b = self.balance_reward(cur_furniture)
 
-        return 
+        if cur_furniture.type == FurnitureType.CARBINET:
+            r_al = self.alignment_reward(cur_furniture)
+            return (r_a + r_v + r_path + r_b + r_al) / 5 
+        return (r_a + r_v + r_path + r_b) / 4 
 
 
     def accessibility_reward(self, cur_furniture: Furniture) -> float:
@@ -326,7 +364,7 @@ class FurnitureRcmEnv(gym.Env):
             violation_area += self.violation_area(cur_furniture, f_inroom)
         violation_ratio = violation_area / cur_furniture.accessibility_area
         self.total_violation_ratio += violation_ratio
-        F = len(self.furnitures_inroom)
+        F = len(self.furnitures_inroom) + 1 
         return 1 - 2 * self.total_violation_ratio / F
 
 
@@ -345,15 +383,15 @@ class FurnitureRcmEnv(gym.Env):
     
 
     def visibility_reward(self, cur_furniture: Furniture):
-        n_wall = self.find_wall_normal_vec(cur_furniture)
+        n_wall, _ = self.near_wall_info(cur_furniture)
         n_f = cur_furniture.normal_vec
         dot_nf_nw = np.dot(n_f, n_wall)
         self.total_dot_nf_nw += dot_nf_nw
-        F = len(self.furnitures_inroom)
+        F = len(self.furnitures_inroom) + 1
         return - self.total_dot_nf_nw / F
 
 
-    def find_wall_normal_vec(self, cur_furniture: Furniture):
+    def near_wall_info(self, cur_furniture: Furniture):
         d_left   = cur_furniture.center.x
         d_right  = self.N - cur_furniture.center.x
         d_bottom = cur_furniture.center.y
@@ -369,18 +407,18 @@ class FurnitureRcmEnv(gym.Env):
             n_wall = np.array([0, 1])
         else:
             n_wall = np.array([0, -1])
-        return n_wall
+        return n_wall, d_min
     
 
     def reachable_reward(self, cur_furniture: Furniture):
         d_door, I_f = self.find_shortest_path(cur_furniture)
-        d_delta = math.sqrt(self.N * self.N + self.M * self.M)
+        d_delta = math.sqrt(self.N**2 + self.M**2)
         if I_f == 1:
-            e_Kf = math.exp(- (d_door * d_door / d_delta * d_delta))
+            e_Kf = math.exp(- ((d_door  / d_delta )** 2))
         else:
             e_Kf = 0
         self.total_reachable += ((1 - I_f) + e_Kf * I_f)
-        F = len(self.furnitures_inroom)
+        F = len(self.furnitures_inroom) + 1
         return 1 - 2 * self.total_reachable / F
 
     
@@ -412,14 +450,14 @@ class FurnitureRcmEnv(gym.Env):
             if current in visited:
                 continue
             visited.add(current)
-            if current == goal:
+            if current[0] >= fur_i1 and current[0] <= fur_i2 and current[1] >= fur_j1 and current[1] <= fur_j2:
                 is_finded = 1
                 return g, is_finded
             
-            for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-                nx, ny = current[0] + dx, current[1] + dy
-                if 0 <= nx < rows and 0 <= ny < cols and grid[nx, ny] == 0:
-                    neighbor = (nx, ny)
+            for di, dj in [(-1,0),(1,0),(0,-1),(0,1)]:
+                ni, nj = current[0] + di, current[1] + dj
+                if 0 <= ni < rows and 0 <= nj < cols and self.occupancy_map.grid[ni][nj] == 0:
+                    neighbor = (ni, nj)
                     if neighbor not in visited:
                         new_g = g + 1
                         new_f = new_g + self.heuristic(neighbor, goal)
@@ -434,7 +472,61 @@ class FurnitureRcmEnv(gym.Env):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
+    def balance_reward(self, cur_furniture: Furniture):
+        """
+            Cân bằng các nội thất trong 1 căn phòng, chia đều nội thất xung quanh phòng
+        """
+        xf = cur_furniture.center.as_array
+        self.total_furtures_area += cur_furniture.area
+        self.total_areaXcenter += (cur_furniture * xf)
+        xF_bar = self.total_areaXcenter / self.total_furtures_area
+
+        self.total_scatter_matrix += cur_furniture * np.outer(xf - xF_bar, xf - xF_bar)
+        Sigma_F = self.total_scatter_matrix / self.total_furtures_area
+        sigma_E_sq = (self.N**2 + self.M**2) / 12
+        I_matrix = np.eye(2)
+        d_delta = math.sqrt(self.N**2 + self.M**2)
+
+        o = np.array([self.N/2, self.M/2])
+        term1 = np.exp(- np.sum((xF_bar - o)**2) / (d_delta ** 2))
+        term2 = np.exp(- (np.linalg.norm(Sigma_F - sigma_E_sq * I_matrix, 'fro') ** 2) / (sigma_E_sq ** 2))
+
+        return term1 + term2 - 1
+    
+    
+    def alignment_reward(self, cur_furniture: Furniture):
+        n_wall, d_fw = self.near_wall_info(cur_furniture)
+        
+        u_f = cur_furniture.u_vector
+        if n_wall[0] == 0:
+            u_wall = np.array([1, 0])
+        else:
+            u_wall = np.array([0, 1])
+        
+        dot_val = abs(np.dot(u_f, u_wall))
+        theta = np.arccos(np.clip(dot_val, -1.0, 1.0))
+
+        omega_f = d_fw / max(cur_furniture.W, cur_furniture.D)
+        term = (np.cos(2*theta) ** 2) * (1 - np.tanh(omega_f) ** 2)
+        
+        self.total_cal_angle_C += cur_furniture.area * term
+        self.total_furtures_area_C += cur_furniture.area
+
+        return self.total_cal_angle_C / self.total_furtures_area_C 
 
     
 if __name__ == '__main__':
-    grid = np.zeros((32, 32), dtype=int)
+    a = 0.9999999
+    print(math.floor(a / 0.25))
+    print(np.round(a * 3))
+    """
+    0.16  = 0 = 0.16
+    0.17 - 0.49 = 1 = 0.33
+    0.5 - 0.83 = 2 = 0.33
+    0.84 - 1 = 3 = 0.16
+
+    0 - 0.25 = 0
+    0.25 - 0.5 = 1
+    0.5 - 0.75 = 2
+    0.75 - 1 = 3
+     """

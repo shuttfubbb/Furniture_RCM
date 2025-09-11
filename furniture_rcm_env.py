@@ -46,15 +46,23 @@ class Point:
         return f"({self.x:.2f}, {self.y:.2f})"
 
 class Door:
-    def __init__(self, W: int, D: int, x: int, y: int):
+    def __init__(self, W, D, x, y):
         self.W = W
         self.x = x
         self.y = y
 
 
+class classproperty(property):
+    def __get__(self, obj, objtype=None):
+        return self.fget(objtype)
+
 class FurnitureType(Enum):
     OTHER = 0
     CARBINET = 1
+
+    @classproperty
+    def num_type(cls):
+        return len(cls)
 
 
 class Furniture:
@@ -84,12 +92,12 @@ class Furniture:
         """
 
     @property
-    def area(self) -> int:
+    def area(self):
         return self.W * self.D
     
 
     @property
-    def accessibility_area(self) -> int:
+    def accessibility_area(self):
         D_ac = self.p_ac2.x - self.p_ac1.x
         W_ac = self.p_ac1.y - self.p_ac2.y
         return W_ac * D_ac - self.area
@@ -215,7 +223,7 @@ class OccupancyMap:
 class FurnitureRcmEnv(gym.Env):
     metadata = {'render_modes': ['human', 'terminal'], 'render_fps': 1}
 
-    def __init__(self, furnitures: List[Furniture], door: Door,render_mode='terminal', N=N_MIN, M=M_MIN, g_size=GRID_SIZE):
+    def __init__(self, furnitures: List[Furniture], door: Door, render_mode='terminal', N=N_MIN, M=M_MIN, g_size=GRID_SIZE):
         if not furnitures:
             raise ValueError("ERROR: The furnitures list is empty")
         self.N = N
@@ -316,12 +324,9 @@ class FurnitureRcmEnv(gym.Env):
 
 
     def step(self, action):
-
-        action = np.clip(action, 0.0, 0.9999999)
-
-        x = math.floor(action[0] * self.N)
-        y = math.floor(action[1] * self.M)
-        k = int(math(action[2] / 0.25))
+        x = action[0] * self.N
+        y = action[1] * self.M
+        k = int(math.floor(np.clip(action[2], 0.0, 0.9999999) / 0.25))
 
         reward = 0
         terminated = False
@@ -516,9 +521,10 @@ class FurnitureRcmEnv(gym.Env):
 
     
 if __name__ == '__main__':
-    a = 0.9999999
-    print(math.floor(a / 0.25))
-    print(np.round(a * 3))
+    print(FurnitureType.num_type)
+    # a = 0.9999999
+    # print(math.floor(a / 0.25))
+    # print(np.round(a * 3))
     """
     0.16  = 0 = 0.16
     0.17 - 0.49 = 1 = 0.33

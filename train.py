@@ -2,6 +2,7 @@ import os
 import gymnasium as gym
 import numpy as np
 import torch
+import json
 import datetime
 
 from stable_baselines3 import PPO
@@ -11,7 +12,7 @@ from stable_baselines3.common.callbacks import EvalCallback
 
 from config import *
 from model import OIDFeatureExtractor
-from furniture_rcm_env import FurnitureEnv, FurnitureType  # giả sử bạn có class này
+from furniture_rcm_env import FurnitureRcmEnv, FurnitureType, Door, Furniture
 
 
 class EvalCallbackWithVecNorm(EvalCallback):
@@ -31,12 +32,40 @@ class EvalCallbackWithVecNorm(EvalCallback):
 
 # Hàm tạo environment cho training
 def make_env(rank, seed=0):
+    with open(DATA_DIR, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    room = data["room"]
+    N = room["N"]
+    M = room["M"]
+    door_json = data["door"]
+    door = Door(
+        W=door_json["W"],
+        x=door_json["x"],
+        y=door_json["y"]
+    )
+    furnitures_json = room["furnitures"]
+    furnitures = []
+    for f_json in furnitures_json:
+        f = Furniture(
+            code=f_json["code"],
+            W=f_json["W"],
+            D=f_json["D"],
+            type=FurnitureType(f_json["type"]),
+            clearances=f_json["clearances"]
+        )
+        num = f_json["num"]
+        for i in range(num):
+            furnitures.append(f)
+
     def _init():
-        env = FurnitureEnv(
-            room_size=(M_MAX, N_MAX),
-            grid_size=GRID_SIZE,
-            pixel2mm=PIXEL2MM,
-            penalty=PENALTY,
+        env = FurnitureRcmEnv(
+            furnitures=furnitures,
+            door=door,
+            render_mode='human',
+            N=N,
+            M=M,
+            g_size=GRID_SIZE
         )
         env.reset(seed=seed + rank)
         return env

@@ -41,5 +41,6 @@ SEED            = 42
 # SYSTEM CONFIG
 MODEL_FOLDER    = "./models"
 LOG_FOLDER      = "logs"
+DATA_DIR        = "data/fakedata.json"
 INF_POS_NUM     = sys.maxsize
 NUM_ENVS        = 12             # số môi trường song song (tùy chỉnh)

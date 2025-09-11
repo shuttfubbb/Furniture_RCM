@@ -26,7 +26,7 @@ register(
 y
 
 Tọa độ của phòng tuân thủ theo hệ trục Oxy đồ họa (hệ trục đồ họa) phù hợp cho GUI
-Các tình toán vị trí đồ đạc trong phòng sử dụng đơn vị minimet (mm)
+Các tính toán vị trí đồ đạc trong phòng sử dụng đơn vị minimet (mm)
 Chiều dài (N) và chiều rộng (M) được sử dụng đơn vị minimet(mm)
 Render sử dụng đơn vị pixel (px)
 Quy đổi 1px = PIXEL2M mm
@@ -525,7 +525,7 @@ class FurnitureRcmEnv(gym.Env):
 
     
 if __name__ == '__main__':
-    print(FurnitureType.num_type)
+    print(FurnitureType(1))
     # a = 0.9999999
     # print(math.floor(a / 0.25))
     # print(np.round(a * 3))

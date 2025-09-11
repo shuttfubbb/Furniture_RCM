@@ -15,17 +15,17 @@ register(
 )
 
 """
-^
+0 ---------------------x
+|
+|
+|
+|
+|
+|
 |
 y
-y
-y
-y
-y
-y
-0 xxxxxxxxxxxxxxxxxxx ->
 
-Tọa độ của phòng tuân thủ theo đúng hệ trục Oxy bình thường
+Tọa độ của phòng tuân thủ theo hệ trục Oxy đồ họa (hệ trục đồ họa) phù hợp cho GUI
 Các tình toán vị trí đồ đạc trong phòng sử dụng đơn vị minimet (mm)
 Chiều dài (N) và chiều rộng (M) được sử dụng đơn vị minimet(mm)
 Render sử dụng đơn vị pixel (px)
@@ -46,7 +46,7 @@ class Point:
         return f"({self.x:.2f}, {self.y:.2f})"
 
 class Door:
-    def __init__(self, W, D, x, y):
+    def __init__(self, W, x, y):
         self.W = W
         self.x = x
         self.y = y
@@ -99,7 +99,7 @@ class Furniture:
     @property
     def accessibility_area(self):
         D_ac = self.p_ac2.x - self.p_ac1.x
-        W_ac = self.p_ac1.y - self.p_ac2.y
+        W_ac = self.p_ac2.y - self.p_ac1.y
         return W_ac * D_ac - self.area
 
 
@@ -115,10 +115,10 @@ class Furniture:
 
     def set_position(self, x, y):
         self.center = Point(x, y)
-        self.p1 = Point(x - self.W/2, y + self.D/2)  # top-left
-        self.p2 = Point(x + self.W/2, y - self.D/2)  # bottom-right
-        self.p_ac1 = Point(self.p1.x - self.clearances[2], self.p1.y + self.clearances[1])  # top-left after clearance   (point access area 1)
-        self.p_ac2 = Point(self.p2.x + self.clearances[0], self.p2.y - self.clearances[3])  # bottom-right after clearance    (point access area 2)
+        self.p1 = Point(x - self.W/2, y - self.D/2)  # top-left
+        self.p2 = Point(x + self.W/2, y + self.D/2)  # bottom-right
+        self.p_ac1 = Point(self.p1.x - self.clearances[2], self.p1.y - self.clearances[1])  # top-left after clearance   (point access area 1)
+        self.p_ac2 = Point(self.p2.x + self.clearances[0], self.p2.y + self.clearances[3])  # bottom-right after clearance    (point access area 2)
 
 
     def reset(self):
@@ -128,11 +128,12 @@ class Furniture:
     
 
     def rotate(self, k: Literal[0, 1, 2, 3] = 0):
+        # k: số bước quay 90 độ theo chiều kim đồng hồ
         k2vector = {
-            0: np.array([1, 0]),
-            1: np.array([0, 1]),
-            2: np.array([-1, 0]),
-            3: np.array([0, -1])
+            0: np.array([1, 0]),   # hướng phải
+            1: np.array([0, 1]),   # hướng xuống
+            2: np.array([-1, 0]),  # hướng trái
+            3: np.array([0, -1])   # hướng lên
         }
 
         k2deg = {
@@ -146,9 +147,10 @@ class Furniture:
         angle_deg = k2deg[k]
         theta = np.deg2rad(angle_deg)
 
+        # Ma trận quay trong hệ trục đồ họa
         R = np.array([
-            [np.cos(theta), -np.sin(theta)],
-            [np.sin(theta),  np.cos(theta)]
+            [np.cos(theta),  np.sin(theta)],
+            [-np.sin(theta), np.cos(theta)]
         ])
 
         corners = [
@@ -171,8 +173,8 @@ class Furniture:
         # Lấy lại bounding box sau khi xoay
         xs = [p[0] for p in rotated]
         ys = [p[1] for p in rotated]
-        self.p1 = Point(min(xs), max(ys))  # top-left sau xoay
-        self.p2 = Point(max(xs), min(ys))  # bottom-right sau xoay
+        self.p1 = Point(min(xs), min(ys))  # top-left sau xoay
+        self.p2 = Point(max(xs), max(ys))  # bottom-right sau xoay
 
         # Cập nhật lại các điểm access sau khi xoay
         self.p_ac1 = Point(rotated_access[0][0], rotated_access[0][1])
@@ -221,9 +223,10 @@ class OccupancyMap:
     
 
 class FurnitureRcmEnv(gym.Env):
-    metadata = {'render_modes': ['human', 'terminal'], 'render_fps': 1}
+    metadata = {'render_modes': ['human'], 'render_fps': 1}
 
-    def __init__(self, furnitures: List[Furniture], door: Door, render_mode='terminal', N=N_MIN, M=M_MIN, g_size=GRID_SIZE):
+    def __init__(self, furnitures: List[Furniture], door: Door, render_mode='human', N=N_MIN, M=M_MIN, g_size=GRID_SIZE):
+        self.render_mode = render_mode
         if not furnitures:
             raise ValueError("ERROR: The furnitures list is empty")
         self.N = N
@@ -250,8 +253,8 @@ class FurnitureRcmEnv(gym.Env):
         max_room_sz = max(self.N, self.M)
 
         type_space = spaces.Discrete(len(FurnitureType))
-        W_space = spaces.Box(low=0, high=max_room_sz, shape=(), dtype=int)
-        D_space = spaces.Box(low=0, high=max_room_sz, shape=(), dtype=int)
+        W_space = spaces.Box(low=0, high=W_MAX, shape=(), dtype=int)
+        D_space = spaces.Box(low=0, high=D_MIN, shape=(), dtype=int)
         object_space = spaces.Tuple((type_space, W_space, D_space))
         map_space = spaces.Box(
             low=0,
@@ -268,12 +271,13 @@ class FurnitureRcmEnv(gym.Env):
         self.observation_space = spaces.Tuple((object_space, object_space, map_space))
 
 
-    def is_out_of_bounds(self, furniture: Furniture):
+    def is_out_of_room(self, furniture: Furniture):
         if (
             furniture.p1.x <= 0 or 
-            furniture.p1.y >= self.M or 
+            furniture.p1.y <= 0 or 
             furniture.p2.x >= self.N or 
-            furniture.p2.y <= 0):
+            furniture.p2.y >= self.M
+        ):
             return True
         return False
     
@@ -281,17 +285,17 @@ class FurnitureRcmEnv(gym.Env):
     def is_overlapping(self, furniture: Furniture):
         for f in self.furnitures_inroom:
             if not(
-                furniture.p_ac2.x   <=  f.p1.x or
-                furniture.p_ac1.x   >=  f.p2.x or
-                furniture.p_ac1.y   <=  f.p2.y or
-                furniture.p_ac2.y   >=  f.p1.y
+                furniture.p2.x <= f.p1.x or  # A bên trái B
+                furniture.p1.x >= f.p2.x or  # A bên phải B
+                furniture.p2.y <= f.p1.y or  # A ở trên B
+                furniture.p1.y >= f.p2.y     # A ở dưới B
             ):
                 return True
         return False
 
 
     def is_valid_position(self, furniture: Furniture):
-        return not self.is_out_of_bounds(furniture) and not self.is_overlapping(furniture)
+        return not self.is_out_of_room(furniture) and not self.is_overlapping(furniture)
 
 
     def _get_observation(self):
@@ -381,10 +385,10 @@ class FurnitureRcmEnv(gym.Env):
         w = min(f_current.p_ac2.x, f_inroom.p2.x) - max(f_current.p_ac1.x, f_inroom.p1.x)
         if w <= 0:
             return 0
-        h = min(f_current.p_ac1.y, f_inroom.p1.y) - max(f_current.p_ac2.y, f_inroom.p2.y)
+        h = min(f_current.p_ac2.y, f_inroom.p2.y) - max(f_current.p_ac1.y, f_inroom.p1.y)
         if h <= 0:
             return 0
-        return float(w * h)
+        return w * h
     
 
     def visibility_reward(self, cur_furniture: Furniture):
@@ -399,8 +403,8 @@ class FurnitureRcmEnv(gym.Env):
     def near_wall_info(self, cur_furniture: Furniture):
         d_left   = cur_furniture.center.x
         d_right  = self.N - cur_furniture.center.x
-        d_bottom = cur_furniture.center.y
-        d_top    = self.M - cur_furniture.center.y
+        d_bottom = self.M - cur_furniture.center.y
+        d_top    = cur_furniture.center.y
 
         n_wall = np.array([1, 0])
         d_min = min(d_left, d_right, d_bottom, d_top)
@@ -409,9 +413,9 @@ class FurnitureRcmEnv(gym.Env):
         elif d_min == d_right:
             n_wall = np.array([-1, 0])
         elif d_min == d_bottom:
-            n_wall = np.array([0, 1])
-        else:
             n_wall = np.array([0, -1])
+        else:
+            n_wall = np.array([0, 1])
         return n_wall, d_min
     
 

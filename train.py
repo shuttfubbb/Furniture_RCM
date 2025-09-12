@@ -1,12 +1,9 @@
 import os
-import gymnasium as gym
-import numpy as np
-import torch
 import json
 import datetime
 
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor, VecNormalize, DummyVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor, DummyVecEnv
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.callbacks import EvalCallback
 
@@ -47,22 +44,23 @@ def make_env(rank, seed=0):
     furnitures_json = room["furnitures"]
     furnitures = []
     for f_json in furnitures_json:
-        f = Furniture(
-            code=f_json["code"],
-            W=f_json["W"],
-            D=f_json["D"],
-            type=FurnitureType(f_json["type"]),
-            clearances=f_json["clearances"]
-        )
         num = f_json["num"]
         for i in range(num):
-            furnitures.append(f)
+            furnitures.append(
+                Furniture(
+                    code=f_json["code"],
+                    W=f_json["W"],
+                    D=f_json["D"],
+                    type=FurnitureType(f_json["type"]),
+                    clearances=f_json["clearances"]
+                )
+            )
 
     def _init():
         env = FurnitureRcmEnv(
             furnitures=furnitures,
             door=door,
-            render_mode='human',
+            render_mode=None,
             N=N,
             M=M,
             g_size=GRID_SIZE

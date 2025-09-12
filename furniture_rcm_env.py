@@ -5,6 +5,8 @@ import numpy as np
 from config import *
 from typing import Optional, Literal, List
 from enum import Enum
+import colorsys
+import pygame
 import heapq
 import copy
 import math
@@ -225,7 +227,7 @@ class OccupancyMap:
 class FurnitureRcmEnv(gym.Env):
     metadata = {'render_modes': ['human'], 'render_fps': 1}
 
-    def __init__(self, furnitures: List[Furniture], door: Door, render_mode='human', N=N_MIN, M=M_MIN, g_size=GRID_SIZE):
+    def __init__(self, furnitures: List[Furniture], door: Door, render_mode=None, N=N_MIN, M=M_MIN, g_size=GRID_SIZE):
         self.render_mode = render_mode
         if not furnitures:
             raise ValueError("ERROR: The furnitures list is empty")
@@ -234,10 +236,14 @@ class FurnitureRcmEnv(gym.Env):
         self.occupancy_map = OccupancyMap(N, M, g_size)
         self.furnitures = furnitures
         self.furnitures.sort(key=lambda x: x.area, reverse=True)
-        self.furnitures_inroom = []
+        self.furnitures_inroom : List[Furniture] = []
         self.cur_index = 0
         self.g_size = g_size
         self.door = door
+
+        self.window = None
+        self.clock = None
+        self.num_furniture_code = self.get_num_furniture_code()
         
         # reward checkpoit
         self.total_violation_ratio = 0
@@ -248,9 +254,6 @@ class FurnitureRcmEnv(gym.Env):
         self.total_scatter_matrix = 0
         self.total_furtures_area_C = 0
         self.total_cal_angle_C = 0
-
-        # Config space
-        max_room_sz = max(self.N, self.M)
 
         type_space = spaces.Discrete(len(FurnitureType))
         W_space = spaces.Box(low=0, high=W_MAX, shape=(), dtype=int)
@@ -269,44 +272,6 @@ class FurnitureRcmEnv(gym.Env):
             dtype=np.float32
         )
         self.observation_space = spaces.Tuple((object_space, object_space, map_space))
-
-
-    def is_out_of_room(self, furniture: Furniture):
-        if (
-            furniture.p1.x <= 0 or 
-            furniture.p1.y <= 0 or 
-            furniture.p2.x >= self.N or 
-            furniture.p2.y >= self.M
-        ):
-            return True
-        return False
-    
-
-    def is_overlapping(self, furniture: Furniture):
-        for f in self.furnitures_inroom:
-            if not(
-                furniture.p2.x <= f.p1.x or  # A bên trái B
-                furniture.p1.x >= f.p2.x or  # A bên phải B
-                furniture.p2.y <= f.p1.y or  # A ở trên B
-                furniture.p1.y >= f.p2.y     # A ở dưới B
-            ):
-                return True
-        return False
-
-
-    def is_valid_position(self, furniture: Furniture):
-        return not self.is_out_of_room(furniture) and not self.is_overlapping(furniture)
-
-
-    def _get_observation(self):
-        cur_furniture = copy.deepcopy(self.furnitures[self.cur_index])
-        next_furniture = Furniture()
-        if self.cur_index + 1 < len(self.furnitures):
-            next_furniture = copy.deepcopy(self.furnitures[self.cur_index + 1])
-
-        cur_furniture_info = (cur_furniture.type.value, cur_furniture.W, cur_furniture.D)
-        next_furniture_info = (next_furniture.type.value, next_furniture.W, next_furniture.D)
-        return cur_furniture_info, next_furniture_info, self.occupancy_map.grid
 
 
     def reset(self, seed=None, options=None):
@@ -352,6 +317,108 @@ class FurnitureRcmEnv(gym.Env):
             reward = -PENALTY
             terminated = True
         return self._get_observation(), reward, terminated, False, {}
+    
+
+    def render(self):
+        if self.render_mode is None:
+            return
+        
+        if self.render_mode == 'human':
+            self.render_human()
+
+
+    def render_human(self):
+        if not self.furnitures_inroom:
+            return
+        
+        wdisplay = self.N // PIXEL2MM
+        hdisplay = self.M // PIXEL2MM
+        if self.window is None:
+            pygame.init()
+            pygame.display.init()
+            self.window = pygame.display.set_mode((wdisplay, hdisplay))
+            self.clock = pygame.time.Clock()
+
+        canvas = pygame.Surface((wdisplay, hdisplay))
+        canvas.fill((255, 255, 255))
+
+        index = 0
+        cur_fcode = self.furnitures_inroom[0].code
+        cur_fcolor = self.gen_color(index, self.num_furniture_code)
+
+        for f in self.furnitures_inroom:
+            if cur_fcode != f.code:
+                index += 1
+                cur_fcode = f.code
+                cur_fcolor = self.gen_color(index, self.num_furniture_code)
+            
+            rect = pygame.Rect(f.p1.x, f.p1.y, f.W, f.D)
+            pygame.draw.rect(canvas, cur_fcolor, rect)
+            self.window.blit(canvas, canvas.get_rect())
+            pygame.display.update()
+            self.clock.tick(self.metadata["render_fps"])
+
+
+    def gen_color(self, num_colors: int, index: int) -> tuple[int, int, int]:
+        if num_colors <= 0:
+            raise ValueError("ERROR: num_colors must > 0")
+        if not (0 <= index < num_colors):
+            raise ValueError("ERROR: index must in range [0, num_colors-1]")
+        
+        hue = index / num_colors
+        r, g, b = colorsys.hsv_to_rgb(hue, 1, 1)
+        return (int(r * 255), int(g * 255), int(b * 255))
+
+
+    def get_num_furniture_code(self):
+        if not self.furnitures:
+            return 0
+        
+        cur_code = self.furnitures[0].code
+        total_code = 1
+        for f in self.furnitures:
+            if cur_code != f.code:
+                cur_code = f.code
+                total_code += 1
+        return total_code
+
+
+    def is_valid_position(self, furniture: Furniture):
+        return not self.is_out_of_room(furniture) and not self.is_overlapping(furniture)
+
+
+    def is_out_of_room(self, furniture: Furniture):
+        if (
+            furniture.p1.x <= 0 or 
+            furniture.p1.y <= 0 or 
+            furniture.p2.x >= self.N or 
+            furniture.p2.y >= self.M
+        ):
+            return True
+        return False
+    
+
+    def is_overlapping(self, furniture: Furniture):
+        for f in self.furnitures_inroom:
+            if not(
+                furniture.p2.x <= f.p1.x or  # A bên trái B
+                furniture.p1.x >= f.p2.x or  # A bên phải B
+                furniture.p2.y <= f.p1.y or  # A ở trên B
+                furniture.p1.y >= f.p2.y     # A ở dưới B
+            ):
+                return True
+        return False
+
+
+    def _get_observation(self):
+        cur_furniture = copy.deepcopy(self.furnitures[self.cur_index])
+        next_furniture = Furniture()
+        if self.cur_index + 1 < len(self.furnitures):
+            next_furniture = copy.deepcopy(self.furnitures[self.cur_index + 1])
+
+        cur_furniture_info = (cur_furniture.type.value, cur_furniture.W, cur_furniture.D)
+        next_furniture_info = (next_furniture.type.value, next_furniture.W, next_furniture.D)
+        return cur_furniture_info, next_furniture_info, self.occupancy_map.grid
 
 
     def calculate_reward(self, cur_furniture: Furniture) -> float:
@@ -522,6 +589,14 @@ class FurnitureRcmEnv(gym.Env):
         self.total_furtures_area_C += cur_furniture.area
 
         return self.total_cal_angle_C / self.total_furtures_area_C 
+
+
+    def close(self):
+        if self.window is not None:
+            pygame.display.quit()
+            pygame.quit()
+            self.window = None
+            self.clock = None
 
     
 if __name__ == '__main__':

@@ -5,7 +5,7 @@ import pygame
 class RoomEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    def __init__(self, room_w=500, room_d=1000, render_mode=None):
+    def __init__(self, room_w=1000, room_d=500, render_mode=None):
         super().__init__()
         self.room_w = room_w
         self.room_d = room_d
